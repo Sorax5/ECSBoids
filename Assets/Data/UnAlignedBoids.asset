@@ -1,0 +1,24 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 08e72b38bd490174489543839f6674e8, type: 3}
+  m_Name: UnAlignedBoids
+  m_EditorClassIdentifier: Assembly-CSharp::BoidsDefinition
+  CohesionRadius: 20
+  CohesionForce: 10
+  AlignementRadius: 20
+  AlignementForce: 10
+  SeparationRadius: 30
+  SeparationForce: 20
+  Angle: 200
+  Speed: 80
+  BoidPrefab: {fileID: 8433239190119533681, guid: d4588ba76e4986440bf0065be8d7ebd1,
+    type: 3}
