@@ -11,7 +11,6 @@ GameObject:
   - component: {fileID: 2906946462642503508}
   - component: {fileID: 4920879503669538026}
   - component: {fileID: 4186564169893706022}
-  - component: {fileID: 6372327956311601633}
   m_Layer: 0
   m_Name: Boid
   m_TagString: Untagged
@@ -90,22 +89,3 @@ MeshRenderer:
   m_SortingLayer: 0
   m_SortingOrder: 0
   m_AdditionalVertexStreams: {fileID: 0}
---- !u!114 &6372327956311601633
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 8433239190119533681}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 840f61c85f9b5e44088b4137707d66fa, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::VelocityComponentAuthoring
-  InitialVelocity: {x: 0, y: 0, z: 0}
-  RandomInitialVelocity: 1
-  CohesionRadius: 0
-  Angle: 0
-  spawnZone:
-    m_Center: {x: 0, y: 0, z: 0}
-    m_Extent: {x: 0, y: 0, z: 0}

@@ -7,6 +7,7 @@ using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Transforms;
 using UnityEngine;
+using Random = Unity.Mathematics.Random;
 
 public class BoidSpawnerAuthoring : MonoBehaviour
 {
@@ -25,18 +26,14 @@ public class BoidSpawnerAuthoring : MonoBehaviour
 
     private void Start()
     {
-        // Prefer global instance to handle cross-scene/SubScene access.
-        Debug.Log("ézdzzdd");
         if (CurrentState == null)
         {
             CurrentState = BoidsState.Instance ?? FindObjectsByType<BoidsState>(FindObjectsSortMode.None).FirstOrDefault();
-            Debug.Log("zdddzd");
         }
 
         if (CurrentState != null)
         {
             CurrentState.OnChangeState += CurrentState_OnChangeState;
-            // Apply initial settings from current state once.
             CurrentState_OnChangeState(CurrentState._currentState);
         }
         else
@@ -183,12 +180,10 @@ public class BoidSpawnerBaker : Baker<BoidSpawnerAuthoring>
 [UpdateInGroup(typeof(InitializationSystemGroup))]
 public partial struct BoidSpawnSystem : ISystem
 {
-    private EntityQuery _spawnerQuery;
     public void OnCreate(ref SystemState state)
     {
         state.RequireForUpdate<BoidSpawnSettings>();
         state.RequireForUpdate<BoidSpawnRequest>();
-        _spawnerQuery = state.GetEntityQuery(ComponentType.ReadOnly<BoidSpawnSettings>(), ComponentType.ReadOnly<BoidSpawnRequest>());
     }
 
     public void OnUpdate(ref SystemState state)
@@ -207,11 +202,11 @@ public partial struct BoidSpawnSystem : ISystem
         var entities = new NativeArray<Entity>(count, Allocator.Temp);
         state.EntityManager.Instantiate(settings.Prefab, entities);
 
-        var rng = Unity.Mathematics.Random.CreateFromIndex(0xC0FFEEu + (uint)settings.InstanceId);
+        var rng = Random.CreateFromIndex(0xC0FFEEu + (uint)settings.InstanceId);
         var prefabHasBoid = state.EntityManager.HasComponent<BoidComponent>(settings.Prefab);
 
         var ecb = new EntityCommandBuffer(Allocator.Temp);
-        for (int i = 0; i < count; i++)
+        for (var i = 0; i < count; i++)
         {
             var instance = entities[i];
 

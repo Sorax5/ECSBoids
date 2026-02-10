@@ -50,7 +50,7 @@ public class BoidsState : MonoBehaviour
         var world = World.DefaultGameObjectInjectionWorld;
         if (world == null)
         {
-            Debug.LogError("ECS World non disponible. Le pont ne peut pas être établi.");
+            Debug.LogError("ECS World non disponible. Le pont ne peut pas ï¿½tre ï¿½tabli.");
             return;
         }
 
@@ -109,7 +109,7 @@ public class BoidsState : MonoBehaviour
 
         _entityManager.SetComponentData(spawnerEntity, settings);
 
-        Debug.Log($"ECS Settings mis à jour pour l'état : {_currentState.worldState}");
+        Debug.Log($"ECS Settings mis ï¿½ jour pour l'ï¿½tat : {_currentState.worldState}");
     }
 
     private void OnDestroy()

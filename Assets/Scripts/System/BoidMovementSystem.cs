@@ -3,7 +3,9 @@ using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Transforms;
 
-
+/// <summary>
+/// System to update the position of boids based on their velocity, and to apply a force to steer them towards a desired speed.
+/// </summary>
 [BurstCompile]
 [UpdateAfter(typeof(BoidAreaConfinementSystem))]
 [UpdateAfter(typeof(BoidSteeringSystem))]
@@ -26,49 +28,51 @@ public partial struct BoidMovementSystem : ISystem
         var dep = state.Dependency;
 
         var deltaTime = SystemAPI.Time.DeltaTime;
-        var elapsed = (float)SystemAPI.Time.ElapsedTime;
+        var elapsed = SystemAPI.Time.ElapsedTime;
 
         state.Dependency = new MoveJob()
         {
-            deltaTime = deltaTime,
-            elapsedTime = elapsed,
-            settings = settings
+            DeltaTime = deltaTime,
+            ElapsedTime = elapsed,
+            Settings = settings
         }.ScheduleParallel(dep);
     }
 }
 
+/// <summary>
+/// Job to update the position of boids based on their velocity, and to apply a force to steer them towards a desired speed.
+/// </summary>
 [BurstCompile]
-public partial struct MoveJob: IJobEntity
+public partial struct MoveJob: IJobEntity, ITimedJob
 {
-    public float deltaTime;
-    public float elapsedTime;
+    public float DeltaTime { get; set; }
+    public double ElapsedTime { get; set; }
 
-    public BoidSpawnSettings settings;
+    public BoidSpawnSettings Settings { get; set; }
 
     private void Execute(ref LocalTransform transform, ref BoidComponent boid, in Entity entity)
     {
-        var p = transform.Position;
-        var t = elapsedTime;
-
-        var desiredSpeed = math.max(0f, settings.Speed);
-        var vSq = math.lengthsq(boid.Velocity);
+        var desiredSpeed = math.max(0f, Settings.Speed);
+        var velocityLengthSquare = math.lengthsq(boid.Velocity);
+        
         if (desiredSpeed > 0f)
         {
-            if (vSq > 1e-10f)
+            if (velocityLengthSquare > 1e-10f)
             {
-                var invLen = math.rsqrt(vSq);
+                var invLen = math.rsqrt(velocityLengthSquare);
                 var speed = 1f / invLen;
                 var dir = boid.Velocity * invLen;
                 var speedError = desiredSpeed - speed;
-                boid.Velocity += dir * (settings.ForceGain * speedError) * deltaTime;
+                
+                boid.Velocity += dir * (Settings.ForceGain * speedError) * DeltaTime;
             }
             else
             {
-                boid.Velocity += desiredSpeed * settings.ForceGain * deltaTime;
+                boid.Velocity += desiredSpeed * Settings.ForceGain * DeltaTime;
             }
         }
 
-        var maxSpeed = settings.MaxSpeed;
+        var maxSpeed = Settings.MaxSpeed;
         var speedSq = math.lengthsq(boid.Velocity);
         if (maxSpeed > 0f && speedSq > maxSpeed * maxSpeed)
         {
@@ -76,6 +80,6 @@ public partial struct MoveJob: IJobEntity
             boid.Velocity *= invLen * maxSpeed;
         }
 
-        transform.Position += boid.Velocity * deltaTime;
+        transform.Position += boid.Velocity * DeltaTime;
     }
 }

@@ -5,6 +5,10 @@ using Unity.Mathematics;
 using Unity.Transforms;
 using Unity.Jobs;
 
+/// <summary>
+/// System to calculate the steering forces for each boid based on the positions and velocities of neighboring boids, applying the separation, alignment, and cohesion rules of the Boids algorithm.
+/// Use a spatial partitioning technique (uniform grid) to optimize the neighbor search, and optionally limit the field of view of the boids to only consider neighbors within a certain angle in front of them.
+/// </summary>
 [BurstCompile]
 [UpdateInGroup(typeof(SimulationSystemGroup))]
 public partial struct BoidSteeringSystem : ISystem
@@ -27,11 +31,13 @@ public partial struct BoidSteeringSystem : ISystem
 
     public void OnDestroy(ref SystemState state)
     {
-        if (_cellMapInitialized && _cellMap.IsCreated)
+        if (!_cellMapInitialized || !_cellMap.IsCreated)
         {
-            _cellMap.Dispose();
-            _cellMapInitialized = false;
+            return;
         }
+        
+        _cellMap.Dispose();
+        _cellMapInitialized = false;
     }
 
     public void OnUpdate(ref SystemState state)
@@ -76,6 +82,7 @@ public partial struct BoidSteeringSystem : ISystem
             Min = settings.Min,
             CellSize = cellSize
         };
+        
         var hBuild = buildJob.Schedule(count, 64, h3);
 
         var maxRadius = cellSize;
@@ -110,13 +117,18 @@ public partial struct BoidSteeringSystem : ISystem
     }
 }
 
+/// <summary>
+/// System to build a spatial partitioning grid (uniform grid) for the boids, where each cell contains a list of indices of the boids that are currently in that cell.
+/// </summary>
 [BurstCompile]
 internal struct SteeringBuildGridJob : IJobParallelFor
 {
     [ReadOnly] public NativeArray<LocalTransform> Transforms;
+    
     public NativeParallelMultiHashMap<uint, int>.ParallelWriter Map;
     public float3 Min;
     public float CellSize;
+    
     public void Execute(int index)
     {
         var pos = Transforms[index].Position;
@@ -126,147 +138,182 @@ internal struct SteeringBuildGridJob : IJobParallelFor
     }
 }
 
+/// <summary>
+/// System to calculate the steering forces for each boid based on the positions and velocities of neighboring boids, applying the separation, alignment, and cohesion rules of the Boids algorithm.
+/// </summary>
 [BurstCompile]
-internal partial struct BoidSteeringJob : IJobEntity
+internal partial struct BoidSteeringJob : IJobEntity, ITimedJob
 {
-    public float DeltaTime;
+    public float DeltaTime { get; set; }
+    public double ElapsedTime { get; set; }
+    
     [ReadOnly] public BoidSpawnSettings Settings;
 
     [ReadOnly] public NativeArray<LocalTransform> TargetsTransforms;
     [ReadOnly] public NativeArray<BoidComponent> TargetsBoids;
     [ReadOnly] public NativeArray<Entity> TargetsEntities;
     [ReadOnly] public NativeParallelMultiHashMap<uint, int> CellMap;
-    public float3 Min;
-    public float CellSize;
+    
+    public float3 Min { get; set; }
+    public float CellSize { get; set; }
 
-    public int NeighborSearchRange;
-    public bool HasFov;
-    public float CosLimit;
+    public int NeighborSearchRange { get; set; }
+    public bool HasFov { get; set; }
+    public float CosLimit { get; set; }
 
-    public int SeparationCap;
-    public int AlignementCap;
-    public int CohesionCap;
+    public int SeparationCap { get; set; }
+    public int AlignementCap { get; set; }
+    public int CohesionCap { get; set; }
 
     private void Execute(ref BoidComponent boid, in LocalTransform transform, in Entity entity)
     {
         var pos = transform.Position;
         var vel = boid.Velocity;
 
-        var cell = (int3)math.floor((pos - Min) / CellSize);
+        var cell = getCell(pos);
 
-        var sepAccum = float3.zero;
-        var sepCount = 0;
-        var aliAccum = float3.zero;
-        var aliCount = 0;
-        var cohAccum = float3.zero;
-        var cohCount = 0;
-
-        float3 fwd;
-        var vSq = math.lengthsq(vel);
-        if (vSq < float.Epsilon)
-        {
-            fwd = new float3(0, 0, 0);
-        }
-        else
-        {
-            fwd = vel * math.rsqrt(vSq);
-        }
+        var separationAccumulation = float3.zero;
+        var separationCount = 0;
+        var alignmentAccumulation = float3.zero;
+        var alignmentCount = 0;
+        var cohesionAccumulation = float3.zero;
+        var cohesionCount = 0;
+        
+        var normalizedVelocityDirection = getNormalizedVelocity(vel);
 
         var sepR2 = Settings.SeparationRadius * Settings.SeparationRadius;
         var aliR2 = Settings.AlignementRadius * Settings.AlignementRadius;
         var cohR2 = Settings.CohesionRadius * Settings.CohesionRadius;
 
         var r = NeighborSearchRange;
+        
         for (var dz = -r; dz <= r; dz++)
-            for (var dy = -r; dy <= r; dy++)
-                for (var dx = -r; dx <= r; dx++)
+        for (var dy = -r; dy <= r; dy++)
+        for (var dx = -r; dx <= r; dx++)
+        {
+            if (isCapsReached(separationCount, alignmentCount, cohesionCount))
+            {
+                dz = r + 1;
+                dy = r + 1;
+                
+                break;
+            }
+            
+            var localPosition = new int3(dx, dy, dz);
+            var cellPosition = cell + localPosition;
+
+            if (!CellMap.TryGetFirstValue(math.hash(cellPosition), 
+                    out var otherIndex, 
+                    out var it))
+            {
+                continue;
+            }
+            
+            do
+            {
+                if (separationCount >= SeparationCap && alignmentCount >= AlignementCap && cohesionCount >= CohesionCap)
                 {
-                    var capsReached = (sepCount >= SeparationCap) & (aliCount >= AlignementCap) & (cohCount >= CohesionCap);
-                    if (capsReached)
-                    {
-                        dz = r + 1;
-                        dy = r + 1;
-                        break;
-                    }
-
-                    var cellPosition = cell + new int3(dx, dy, dz);
-                    var key = math.hash(cellPosition);
-
-                    if (CellMap.TryGetFirstValue(key, out var otherIndex, out var it))
-                    {
-                        do
-                        {
-                            if (sepCount >= SeparationCap && aliCount >= AlignementCap && cohCount >= CohesionCap)
-                            {
-                                break;
-                            }
-
-                            var otherEntity = TargetsEntities[otherIndex];
-                            if (otherEntity == entity)
-                            {
-                                continue;
-                            }
-
-                            var otherTransform = TargetsTransforms[otherIndex];
-                            var offset = otherTransform.Position - pos;
-                            var lenSq = math.lengthsq(offset);
-                            if (lenSq < float.Epsilon)
-                            {
-                                continue;
-                            }
-
-                            var withinFov = true;
-                            if (HasFov && vSq >= float.Epsilon)
-                            {
-                                var dir = offset * math.rsqrt(lenSq);
-                                withinFov = math.dot(fwd, dir) >= CosLimit;
-                            }
-
-                            if (!withinFov)
-                            {
-                                continue;
-                            }
-
-                            if (sepCount < SeparationCap && sepR2 > 0f && lenSq <= sepR2)
-                            {
-                                sepAccum += (pos - otherTransform.Position) / math.max(lenSq, float.Epsilon);
-                                sepCount++;
-                            }
-
-                            if (aliCount < AlignementCap && aliR2 > 0f && lenSq <= aliR2)
-                            {
-                                var otherBoid = TargetsBoids[otherIndex];
-                                aliAccum += otherBoid.Velocity;
-                                aliCount++;
-                            }
-
-                            if (cohCount < CohesionCap && cohR2 > 0f && lenSq <= cohR2)
-                            {
-                                cohAccum += otherTransform.Position;
-                                cohCount++;
-                            }
-
-                        } while (CellMap.TryGetNextValue(out otherIndex, ref it));
-                    }
+                    break;
                 }
 
-        if (sepCount > 0)
-        {
-            boid.Velocity += (Settings.SeparationForce * DeltaTime) * math.normalizesafe(sepAccum);
+                var otherEntity = TargetsEntities[otherIndex];
+                if (otherEntity == entity)
+                {
+                    continue;
+                }
+
+                var otherTransform = TargetsTransforms[otherIndex];
+                var offset = otherTransform.Position - pos;
+                
+                var lengthSq = math.lengthsq(offset);
+                if (lengthSq < float.Epsilon)
+                {
+                    continue;
+                }
+
+                var withinFov = isWithinFov(offset, normalizedVelocityDirection, CosLimit);
+                if (!withinFov)
+                {
+                    continue;
+                }
+
+                if (separationCount < SeparationCap && sepR2 > 0f && lengthSq <= sepR2)
+                {
+                    separationAccumulation += (pos - otherTransform.Position) / math.max(lengthSq, float.Epsilon);
+                    separationCount++;
+                }
+
+                if (alignmentCount < AlignementCap && aliR2 > 0f && lengthSq <= aliR2)
+                {
+                    var otherBoid = TargetsBoids[otherIndex];
+                    alignmentAccumulation += otherBoid.Velocity;
+                    alignmentCount++;
+                }
+
+                if (cohesionCount >= CohesionCap || !(cohR2 > 0f) || !(lengthSq <= cohR2))
+                {
+                    continue;
+                }
+                
+                cohesionAccumulation += otherTransform.Position;
+                cohesionCount++;
+
+            } while (CellMap.TryGetNextValue(out otherIndex, ref it));
         }
 
-        if (aliCount > 0)
+        if (separationCount > 0)
         {
-            var avg = aliAccum / aliCount;
+            applyVelocity(ref boid, Settings.SeparationForce, separationAccumulation);
+        }
+
+        if (alignmentCount > 0)
+        {
+            var avg = alignmentAccumulation / alignmentCount;
             var steer = avg - vel;
-            boid.Velocity += (Settings.AlignementForce * DeltaTime) * math.normalizesafe(steer);
+            
+            applyVelocity(ref boid, Settings.AlignementForce, steer);
         }
 
-        if (cohCount > 0)
+        if (cohesionCount <= 0)
         {
-            var center = cohAccum / cohCount;
-            var toCenter = center - pos;
-            boid.Velocity += (Settings.CohesionForce * DeltaTime) * math.normalizesafe(toCenter);
+            return;
         }
+        
+        var center = cohesionAccumulation / cohesionCount;
+        var toCenter = center - pos;
+        
+        applyVelocity(ref boid, Settings.CohesionForce, toCenter);
+    }
+
+    private void applyVelocity(ref BoidComponent boid, float force, float3 pos)
+    {
+        boid.Velocity += (force * DeltaTime) * math.normalizesafe(pos);
+    }
+    
+    private int3 getCell(float3 position)
+    {
+        return (int3)math.floor((position - Min) / CellSize);
+    }
+    
+    private float3 getNormalizedVelocity(float3 velocity)
+    {
+        var vSq = math.lengthsq(velocity);
+        if (vSq < float.Epsilon)
+        {
+            return new float3(0, 0, 0);
+        }
+
+        return velocity * math.rsqrt(vSq);
+    }
+    
+    private bool isWithinFov(float3 toOther, float3 normalizedVelocityDirection, float cosLimit)
+    {
+        var dir = math.normalizesafe(toOther);
+        return math.dot(normalizedVelocityDirection, dir) >= cosLimit;
+    }
+    
+    private bool isCapsReached(int sepCount, int aliCount, int cohCount)
+    {
+        return (sepCount >= SeparationCap) & (aliCount >= AlignementCap) & (cohCount >= CohesionCap);
     }
 }

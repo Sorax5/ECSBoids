@@ -4,12 +4,14 @@ using Unity.Mathematics;
 using Unity.Transforms;
 
 
+/// <summary>
+/// System to apply a confinement force to boids that are close to the boundaries of the defined area.
+/// </summary>
 [BurstCompile]
 [UpdateAfter(typeof(BoidSteeringSystem))]
 public partial struct BoidAreaConfinementSystem : ISystem
 {
-    private BoidSpawnSettings _settings;
-    private bool _hasSettings;
+    private BoidSpawnSettings? _settings;
 
     public void OnCreate(ref SystemState state)
     {
@@ -18,72 +20,56 @@ public partial struct BoidAreaConfinementSystem : ISystem
 
     public void OnUpdate(ref SystemState state)
     {
-        if (!_hasSettings)
+        if (_settings == null)
         {
-            if (SystemAPI.TryGetSingleton(out BoidSpawnSettings s))
-            {
-                _settings = s;
-                _hasSettings = true;
-            }
-            else
+            if (!SystemAPI.TryGetSingleton(out BoidSpawnSettings s))
             {
                 return;
             }
+            
+            _settings = s;
         }
 
         var dep = state.Dependency;
 
         var job = new ConfinementJob
         {
-            deltaTime = SystemAPI.Time.DeltaTime,
-            settings = _settings
+            DeltaTime = SystemAPI.Time.DeltaTime,
+            Settings = _settings.Value
         };
 
         state.Dependency = job.ScheduleParallel(dep);
     }
 }
 
+/// <summary>
+/// Confinement job that applies a force to boids that are close to the boundaries of the defined area, pushing them back towards the center.
+/// </summary>
 [BurstCompile]
-internal partial struct ConfinementJob : IJobEntity
+internal partial struct ConfinementJob : IJobEntity, ITimedJob
 {
-    public float deltaTime;
-    public BoidSpawnSettings settings;
+    public float DeltaTime { get; set; }
+    public double ElapsedTime { get; set; }
+    
+    public BoidSpawnSettings Settings { get; set; }
 
     private void Execute(in LocalTransform transform, ref BoidComponent boid)
     {
         var position = transform.Position;
         var confinementForce = float3.zero;
 
-        var boundaryThreshold = settings.BoundaryThreshold;
-        var forceGain = settings.ForceGain;
-        var maxSpeed = settings.MaxSpeed;
+        applyConfinement(position, ref confinementForce, ref boid);
+    }
 
-        if (position.x < settings.Min.x + boundaryThreshold)
-        {
-            confinementForce.x += (settings.Min.x + boundaryThreshold - position.x) / boundaryThreshold;
-        }
-        else if (position.x > settings.Max.x - boundaryThreshold)
-        {
-            confinementForce.x -= (position.x - (settings.Max.x - boundaryThreshold)) / boundaryThreshold;
-        }
+    private void applyConfinement(float3 position, ref float3 confinementForce, ref BoidComponent boid)
+    {
+        var boundaryThreshold = Settings.BoundaryThreshold;
+        var forceGain = Settings.ForceGain;
+        var maxSpeed = Settings.MaxSpeed;
 
-        if (position.y < settings.Min.y + boundaryThreshold)
-        {
-            confinementForce.y += (settings.Min.y + boundaryThreshold - position.y) / boundaryThreshold;
-        }
-        else if (position.y > settings.Max.y - boundaryThreshold)
-        {
-            confinementForce.y -= (position.y - (settings.Max.y - boundaryThreshold)) / boundaryThreshold;
-        }
-
-        if (position.z < settings.Min.z + boundaryThreshold)
-        {
-            confinementForce.z += (settings.Min.z + boundaryThreshold - position.z) / boundaryThreshold;
-        }
-        else if (position.z > settings.Max.z - boundaryThreshold)
-        {
-            confinementForce.z -= (position.z - (settings.Max.z - boundaryThreshold)) / boundaryThreshold;
-        }
+        confinementForce.x = calculateAxisConfinement(position.x, Settings.Min.x, Settings.Max.x, boundaryThreshold);
+        confinementForce.y = calculateAxisConfinement(position.y, Settings.Min.y, Settings.Max.y, boundaryThreshold);
+        confinementForce.z = calculateAxisConfinement(position.z, Settings.Min.z, Settings.Max.z, boundaryThreshold);
 
         confinementForce = math.clamp(confinementForce, -1f, 1f);
 
@@ -92,7 +78,7 @@ internal partial struct ConfinementJob : IJobEntity
             return;
         }
 
-        boid.Velocity += forceGain * deltaTime * confinementForce;
+        boid.Velocity += forceGain * DeltaTime * confinementForce;
 
         var speedSq = math.lengthsq(boid.Velocity);
         var maxSpeedSq = maxSpeed * maxSpeed;
@@ -100,5 +86,20 @@ internal partial struct ConfinementJob : IJobEntity
         {
             boid.Velocity = math.normalizesafe(boid.Velocity) * maxSpeed;
         }
+    }
+
+    private float calculateAxisConfinement(float position, float min, float max, float boundaryThreshold)
+    {
+        if (position < min + boundaryThreshold)
+        {
+            return (min + boundaryThreshold - position) / boundaryThreshold;
+        }
+        
+        if (position > max - boundaryThreshold)
+        {
+            return - (position - (max - boundaryThreshold)) / boundaryThreshold;
+        }
+        
+        return 0f;
     }
 }
